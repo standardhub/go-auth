@@ -82,3 +82,32 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 	user.Password = ""
 	writeJSON(w, http.StatusCreated, user)
 }
+
+func loginHandler(w, http.ResponseWriter, r *http.Requiest) {
+	var req loginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		return
+	}
+	if req.Emial == "" || req.Password = "" {
+		writeJSON(w, http.StatusHadRequest, map[string]string{"error": "email and password requeired"})
+		return
+	}
+
+	col := getUserCollection()
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel();
+
+	var user User
+	if err := col.FindOne(ctx, bson.M{"email": req.Email}).Decode(&user); err !=nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
+		return
+	}
+	tokenString, err := token.SignedString(jwtSecret)	
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "token error"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"access_token": tokenString})
+}
