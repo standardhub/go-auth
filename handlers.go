@@ -111,3 +111,31 @@ func loginHandler(w, http.ResponseWriter, r *http.Requiest) {
 
 	writeJSON(w, http.StatusOK, map[string]string{"access_token": tokenString})
 }
+
+func profileHandler(w http.ResponseWriter, r *http.Request) {
+	// user ID is stored in context by auth middleware
+	uid, ok : r.Content().Value("user_id").(string)
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	//find user
+	col := getUserCollection()
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	oid, err := primitive.ObjectIDFromHex(uid) 
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid user id"})
+		return
+	}
+
+	var user User
+	if err := col.FindOne(ctx, bson.M{"_id": oid}, options.FindOne()).Decode(&user); err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
+		return
+	}
+
+	user.Password = ""
+	writeJSON(w, http.StatusOK, user)
+}
