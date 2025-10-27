@@ -3,13 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
-	"go.mongodb.org/mongo-driver/mongo/options"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -17,93 +15,106 @@ import (
 
 type registerRequest struct {
 	Email	 string `json:"email"`
-	password string `json:"password"`
+	Password string `json:"password"`
 }
 
 type loginRequest struct {
 	Email 	 string `json:"email"`
-	password string `json:"password"`
+	Password string `json:"password"`
 }
 
-func writeJson(w http.ResponseWriter, code int, v interface{}) {
+func writeJSON(w http.ResponseWriter, code int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(v)
+	_ = json.NewEncoder(w).Encode(v)
 }
 
 func registerHandler(w http.ResponseWriter, r *http.Request) {
 	var req registerRequest
-	if err :=json.NewDecoder(r.Body).Decode(&req); err !=nil {
-		writeJSON(w, http.StatusDadRequest, map[string]string{"error": "invalid request"})
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
 		return
 	}
-	if req.Email == "" || req.Passowrd == "" {
-		writeJSON(w, http.StatusDadRequest, map[string]string{"error": "email and password required"})
+	if req.Email == "" || req.Password == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "email and password required"})
 		return
 	}
 
 	col := getUserCollection()
-	
-	//check exists
+
+	// check exists
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel();
+	defer cancel()
 
 	count, err := col.CountDocuments(ctx, bson.M{"email": req.Email})
-	if err!= nil {
-		writeJson{w.http.StatusInternalServerError, map[string]string{"error": "db error"}}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "db error"})
 		return
 	}
 
 	if count > 0 {
-		writeJSON(w, http.statusDadRequest, map[string]string{"error": "email aleary registered"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "email already registered"})
 		return
 	}
 
-	//hash password
-	hashed, err : = bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
-	if err! = nil {
+	// hash password
+	hashed, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "hash error"})
 		return
 	}
 
 	user := User{
-		Email: req.Email,
-		Password: string(hashed)
+		Email:    req.Email,
+		Password: string(hashed),
 	}
 
-	res, err := col.InsertOne(stx, user)
+	res, err := col.InsertOne(ctx, user)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "db insert error"})
 		return
 	}
 
-	id := res.InsertedID.(primitive.ObjectID)
-	user.ID = id
+	if oid, ok := res.InsertedID.(primitive.ObjectID); ok {
+		user.ID = oid
+	}
 	user.Password = ""
 	writeJSON(w, http.StatusCreated, user)
 }
 
-func loginHandler(w, http.ResponseWriter, r *http.Requiest) {
+func loginHandler(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
 		return
 	}
-	if req.Emial == "" || req.Password = "" {
-		writeJSON(w, http.StatusHadRequest, map[string]string{"error": "email and password requeired"})
+	if req.Email == "" || req.Password == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "email and password required"})
 		return
 	}
 
 	col := getUserCollection()
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel();
+	defer cancel()
 
 	var user User
-	if err := col.FindOne(ctx, bson.M{"email": req.Email}).Decode(&user); err !=nil {
+	if err := col.FindOne(ctx, bson.M{"email": req.Email}).Decode(&user); err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
 		return
 	}
-	tokenString, err := token.SignedString(jwtSecret)	
+
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
+		return
+	}
+
+	// create token
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub": user.ID.Hex(),
+		"exp": time.Now().Add(tokenExpiry).Unix(),
+	})
+
+	tokenString, err := tok.SignedString(jwtSecret)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "token error"})
 		return
@@ -114,24 +125,24 @@ func loginHandler(w, http.ResponseWriter, r *http.Requiest) {
 
 func profileHandler(w http.ResponseWriter, r *http.Request) {
 	// user ID is stored in context by auth middleware
-	uid, ok : r.Content().Value("user_id").(string)
+	uid, ok := r.Context().Value("user_id").(string)
 	if !ok {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
 
-	//find user
+	// find user
 	col := getUserCollection()
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	oid, err := primitive.ObjectIDFromHex(uid) 
+	oid, err := primitive.ObjectIDFromHex(uid)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid user id"})
 		return
 	}
 
 	var user User
-	if err := col.FindOne(ctx, bson.M{"_id": oid}, options.FindOne()).Decode(&user); err != nil {
+	if err := col.FindOne(ctx, bson.M{"_id": oid}).Decode(&user); err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
 		return
 	}

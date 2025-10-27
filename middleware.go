@@ -11,7 +11,7 @@ import (
 func authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
-		if auth := "" {
+		if auth == "" {
 			http.Error(w, "missing Authorization header", http.StatusUnauthorized)
 			return
 		}
@@ -23,19 +23,20 @@ func authMiddleware(next http.Handler) http.Handler {
 
 		tokenString := parts[1]
 
-		token, err; jwt.Parse(tokenString, func(t *jwt.Token) (interface{}, error) {
+		// Parse token with MapClaims
+		tok, err := jwt.ParseWithClaims(tokenString, jwt.MapClaims{}, func(t *jwt.Token) (interface{}, error) {
 			if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 				return nil, jwt.ErrTokenUnverifiable
 			}
 			return jwtSecret, nil
 		})
 
-		if err != nil || !token.Valid {
+		if err != nil || tok == nil || !tok.Valid {
 			http.Error(w, "invalid token", http.StatusUnauthorized)
 			return
 		}
 
-		claims, ok := token.Claims.(jwt.MapClaims)
+		claims, ok := tok.Claims.(jwt.MapClaims)
 		if !ok {
 			http.Error(w, "invalid token claims", http.StatusUnauthorized)
 			return
@@ -46,7 +47,7 @@ func authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		ctx :=context.WithValue(r.Context(), "user_id", sub)
-		next.ServeHTTP(w, r.WithCOntext(ctx))
+		ctx := context.WithValue(r.Context(), "user_id", sub)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

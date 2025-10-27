@@ -17,12 +17,12 @@ func connectMongo() *mongo.Client {
 
 	c, err := mongo.Connect(ctx, options.Client().ApplyURI(mongoURI))
 	if err != nil {
-		log.Fatal("mongo connect error: %v", err)
+		log.Fatalf("mongo connect error: %v", err)
 	}
 
 	// simple ping
-	if err := c.Ping(ctx, nil); err !=nil {
-		log.Fatal("mongo ping error: %v", err)
+	if err := c.Ping(ctx, nil); err != nil {
+		log.Fatalf("mongo ping error: %v", err)
 	}
 
 	return c
