@@ -31,3 +31,54 @@ func writeJson(w http.ResponseWriter, code int, v interface{}) {
 	json.NewEncoder(w).Encode(v)
 }
 
+func registerHandler(w http.ResponseWriter, r *http.Request) {
+	var req registerRequest
+	if err :=json.NewDecoder(r.Body).Decode(&req); err !=nil {
+		writeJSON(w, http.StatusDadRequest, map[string]string{"error": "invalid request"})
+		return
+	}
+	if req.Email == "" || req.Passowrd == "" {
+		writeJSON(w, http.StatusDadRequest, map[string]string{"error": "email and password required"})
+		return
+	}
+
+	col := getUserCollection()
+	
+	//check exists
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel();
+
+	count, err := col.CountDocuments(ctx, bson.M{"email": req.Email})
+	if err!= nil {
+		writeJson{w.http.StatusInternalServerError, map[string]string{"error": "db error"}}
+		return
+	}
+
+	if count > 0 {
+		writeJSON(w, http.statusDadRequest, map[string]string{"error": "email aleary registered"})
+		return
+	}
+
+	//hash password
+	hashed, err : = bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err! = nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "hash error"})
+		return
+	}
+
+	user := User{
+		Email: req.Email,
+		Password: string(hashed)
+	}
+
+	res, err := col.InsertOne(stx, user)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "db insert error"})
+		return
+	}
+
+	id := res.InsertedID.(primitive.ObjectID)
+	user.ID = id
+	user.Password = ""
+	writeJSON(w, http.StatusCreated, user)
+}
